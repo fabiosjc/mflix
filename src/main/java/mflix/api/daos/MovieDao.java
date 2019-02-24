@@ -11,8 +11,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
+
+import static com.mongodb.client.model.Filters.*;
+import static com.mongodb.client.model.Projections.*;
 
 @Component
 public class MovieDao extends AbstractMFlixDao {
@@ -62,7 +66,7 @@ public class MovieDao extends AbstractMFlixDao {
 
     List<Bson> pipeline = new ArrayList<>();
     // match stage to find movie
-    Bson match = Aggregates.match(Filters.eq("_id", new ObjectId(movieId)));
+    Bson match = Aggregates.match(eq("_id", new ObjectId(movieId)));
     pipeline.add(match);
     // TODO> Ticket: Get Comments - implement the lookup stage that allows the comments to
     // retrieved with Movies.
@@ -118,9 +122,12 @@ public class MovieDao extends AbstractMFlixDao {
    */
   public List<Document> getMoviesByCountry(String... country) {
 
-    Bson queryFilter = new Document();
-    Bson projection = new Document();
+    Bson queryFilter = in("countries", Arrays.asList(country));
     List<Document> movies = new ArrayList<>();
+    moviesCollection
+            .find(queryFilter)
+            .projection(fields(include("title")))
+            .into(movies);
 
     return movies;
   }
