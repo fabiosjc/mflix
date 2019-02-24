@@ -120,7 +120,6 @@ public class MovieDao extends AbstractMFlixDao {
 
     Bson queryFilter = new Document();
     Bson projection = new Document();
-    //TODO> Ticket: Projection - implement the query and projection required by the unit test
     List<Document> movies = new ArrayList<>();
 
     return movies;
