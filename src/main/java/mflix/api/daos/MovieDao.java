@@ -10,13 +10,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import javax.print.Doc;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 
+import static com.mongodb.client.model.Aggregates.*;
 import static com.mongodb.client.model.Filters.*;
 import static com.mongodb.client.model.Projections.*;
+import static java.util.Arrays.asList;
 
 @Component
 public class MovieDao extends AbstractMFlixDao {
@@ -34,8 +37,17 @@ public class MovieDao extends AbstractMFlixDao {
 
   @SuppressWarnings("unchecked")
   private Bson buildLookupStage() {
-    return null;
+    List<Variable<String>> let = new ArrayList<>();
+    let.add(new Variable<String>("id", "$_id"));
 
+    Bson match = match(Document.parse("{'$expr': {'$eq': ['$movie_id', '$$id']}}"));
+    Bson sort = sort(Sorts.descending("date"));
+
+    List<Bson> pipeline = new ArrayList<>();
+    pipeline.add(match);
+    pipeline.add(sort);
+
+    return lookup("comments", let, pipeline, "comments");
   }
 
   /**
@@ -66,10 +78,14 @@ public class MovieDao extends AbstractMFlixDao {
 
     List<Bson> pipeline = new ArrayList<>();
     // match stage to find movie
-    Bson match = Aggregates.match(eq("_id", new ObjectId(movieId)));
+    Bson match = match(eq("_id", new ObjectId(movieId)));
     pipeline.add(match);
-    // TODO> Ticket: Get Comments - implement the lookup stage that allows the comments to
-    // retrieved with Movies.
+
+    Bson lookup = buildLookupStage();
+    if (lookup != null) {
+      pipeline.add(lookup);
+    }
+
     Document movie = moviesCollection.aggregate(pipeline).first();
 
     return movie;
@@ -122,7 +138,7 @@ public class MovieDao extends AbstractMFlixDao {
    */
   public List<Document> getMoviesByCountry(String... country) {
 
-    Bson queryFilter = in("countries", Arrays.asList(country));
+    Bson queryFilter = in("countries", asList(country));
     List<Document> movies = new ArrayList<>();
     moviesCollection
             .find(queryFilter)
@@ -168,7 +184,7 @@ public class MovieDao extends AbstractMFlixDao {
    * @return List of documents sorted by sortKey that match the cast selector.
    */
   public List<Document> getMoviesByCast(String sortKey, int limit, int skip, String... cast) {
-    Bson castFilter = in("cast", Arrays.asList(cast));
+    Bson castFilter = in("cast", asList(cast));
     Bson sort = Sorts.descending(sortKey);
     List<Document> movies = new ArrayList<>();
     moviesCollection
@@ -266,8 +282,8 @@ public class MovieDao extends AbstractMFlixDao {
     List<Document> movies = new ArrayList<>();
     String sortKey = "tomatoes.viewer.numReviews";
     Bson skipStage = Aggregates.skip(skip);
-    Bson matchStage = Aggregates.match(Filters.in("cast", cast));
-    Bson sortStage = Aggregates.sort(Sorts.descending(sortKey));
+    Bson matchStage = match(Filters.in("cast", cast));
+    Bson sortStage = sort(Sorts.descending(sortKey));
     Bson limitStage = Aggregates.limit(limit);
     Bson facetStage = buildFacetStage();
     // Using a LinkedList to ensure insertion order
