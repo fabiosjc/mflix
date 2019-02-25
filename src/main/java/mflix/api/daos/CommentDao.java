@@ -1,8 +1,6 @@
 package mflix.api.daos;
 
-import com.mongodb.MongoClientSettings;
-import com.mongodb.MongoWriteException;
-import com.mongodb.ReadConcern;
+import com.mongodb.*;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.model.Aggregates;
@@ -29,6 +27,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
+import static com.mongodb.client.model.Updates.set;
 import static org.bson.codecs.configuration.CodecRegistries.fromProviders;
 import static org.bson.codecs.configuration.CodecRegistries.fromRegistries;
 
@@ -79,12 +78,12 @@ public class CommentDao extends AbstractMFlixDao {
    * returns the resulting Comment object.
    */
   public Comment addComment(Comment comment) {
+    if (comment.getId() == null || comment.getId().isEmpty()) {
+      throw new IncorrectDaoOperation("Comment objects need to have an id field set.");
+    }
 
-    // TODO> Ticket - Update User reviews: implement the functionality that enables adding a new
-    // comment.
-    // TODO> Ticket - Handling Errors: Implement a try catch block to
-    // handle a potential write exception when given a wrong commentId.
-    return null;
+    commentCollection.insertOne(comment);
+    return comment;
   }
 
   /**
@@ -102,11 +101,13 @@ public class CommentDao extends AbstractMFlixDao {
    */
   public boolean updateComment(String commentId, String text, String email) {
 
-    // TODO> Ticket - Update User reviews: implement the functionality that enables updating an
-    // user own comments
-    // TODO> Ticket - Handling Errors: Implement a try catch block to
-    // handle a potential write exception when given a wrong commentId.
-    return false;
+    Bson comment = new Document("_id", new ObjectId(commentId)).append("email", email);
+
+    Bson update = Updates.combine(Updates.set("text", text), Updates.set("date", new Date())) ;
+
+    UpdateResult res = commentCollection.updateOne(comment, update);
+
+    return res.getModifiedCount() > 0;
   }
 
   /**
