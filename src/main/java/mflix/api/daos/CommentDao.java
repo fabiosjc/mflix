@@ -3,6 +3,8 @@ package mflix.api.daos;
 import com.mongodb.*;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoCollection;
+import com.mongodb.client.model.Aggregates;
+import com.mongodb.client.model.Sorts;
 import com.mongodb.client.model.Updates;
 import com.mongodb.client.result.DeleteResult;
 import com.mongodb.client.result.UpdateResult;
@@ -140,8 +142,42 @@ public class CommentDao extends AbstractMFlixDao {
     // // guarantee for the returned documents. Once a commenter is in the
     // // top 20 of users, they become a Critic, so mostActive is composed of
     // // Critic objects.
-    List<Bson> pipeline = Arrays.asList(group("$email", sum("count", 1L)), sort(descending("count")), limit(20));
-    commentCollection.aggregate(pipeline, Critic.class).iterator().forEachRemaining(mostActive::add);
+
+
+    /**
+    * In this method we can use the $sortByCount stage:
+    * https://docs.mongodb.com/manual/reference/operator/aggregation/sortByCount/index.html
+    * using the $email field expression.
+    */
+    Bson groupByCountStage = sortByCount("$email");
+    // Let's sort descending on the `count` of comments
+    Bson sortStage = sort(Sorts.descending("count"));
+    // Given that we are required the 20 top users we have to also $limit
+    // the resulting list
+    Bson limitStage = limit(20);
+    // Add the stages to a pipeline
+    List<Bson> pipeline = new ArrayList<>();
+    pipeline.add(groupByCountStage);
+    pipeline.add(sortStage);
+    pipeline.add(limitStage);
+
+    // We cannot use the CommentDao class `commentCollection` object
+    // since this returns Comment objects.
+    // We need to create a new collection instance that returns
+    // Critic objects instead.
+    // Given that this report is required to be accurate and
+    // reliable, we want to guarantee a high level of durability, by
+    // ensuring that the majority of nodes in our Replica Set
+    // acknowledged all documents for this query. Therefore we will be
+    // setting our ReadConcern to "majority"
+    // https://docs.mongodb.com/manual/reference/method/cursor.readConcern/
+    MongoCollection<Critic> commentCriticCollection =
+          this.db.getCollection("comments", Critic.class)
+                  .withCodecRegistry(this.pojoCodecRegistry)
+                  .withReadConcern(ReadConcern.MAJORITY);
+
+    commentCriticCollection.aggregate(pipeline).into(mostActive);
+
     return mostActive;
   }
 }
