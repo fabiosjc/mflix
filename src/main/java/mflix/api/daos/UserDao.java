@@ -60,8 +60,16 @@ public class UserDao extends AbstractMFlixDao {
    * @return True if successful, throw IncorrectDaoOperation otherwise
    */
   public boolean addUser(User user) {
-    usersCollection.insertOne(user);
-    return true;
+    try {
+      usersCollection.withWriteConcern(WriteConcern.MAJORITY).insertOne(user);
+      return true;
+
+    } catch (MongoWriteException e) {
+      log.error(
+              "Could not insert `{}` into `users` collection: {}", user.getEmail(), e.getMessage());
+      throw new IncorrectDaoOperation(
+              MessageFormat.format("User with email `{0}` already exists", user.getEmail()));
+    }
   }
 
   /**
@@ -72,11 +80,17 @@ public class UserDao extends AbstractMFlixDao {
    * @return true if successful
    */
   public boolean createUserSession(String userId, String jwt) {
-    Bson updateFilter = new Document("user_id", userId);
-    Bson setUpdate = Updates.set("jwt", jwt);
-    UpdateOptions options = new UpdateOptions().upsert(true);
-    sessionsCollection.updateOne(updateFilter, setUpdate, options);
-    return true;
+    try{
+      Bson updateFilter = new Document("user_id", userId);
+      Bson setUpdate = Updates.set("jwt", jwt);
+      UpdateOptions options = new UpdateOptions().upsert(true);
+      sessionsCollection.updateOne(updateFilter, setUpdate, options);
+      return true;
+    } catch (MongoWriteException e){
+      String errorMessage =
+              MessageFormat.format("Unable to $set jwt token in sessions collection: {}", e.getMessage());
+      throw new IncorrectDaoOperation(errorMessage, e);
+    }
   }
 
   /**
@@ -117,15 +131,24 @@ public class UserDao extends AbstractMFlixDao {
    */
   public boolean deleteUser(String email) {
     // remove user sessions
-    if (deleteUserSessions(email)) {
-      Document userDeleteFilter = new Document("email", email);
-      DeleteResult res = usersCollection.deleteOne(userDeleteFilter);
+    try {
+      if (deleteUserSessions(email)) {
+        Document userDeleteFilter = new Document("email", email);
+        DeleteResult res = usersCollection.deleteOne(userDeleteFilter);
 
-      if (res.getDeletedCount() < 0) {
-        log.warn("User with `email` {} not found. Potential concurrent operation?!");
+        if (res.getDeletedCount() < 0) {
+          log.warn("User with `email` {} not found. Potential concurrent operation?!");
+        }
+
+        return res.wasAcknowledged();
       }
+    } catch (Exception e) {
+      String errorMessage = MessageFormat.format("Issue caught while trying to " +
+                      "delete user `{}`: {}",
+              email,
+              e.getMessage());
+      throw new IncorrectDaoOperation(errorMessage);
 
-      return res.wasAcknowledged();
     }
     return false;
   }
@@ -139,12 +162,28 @@ public class UserDao extends AbstractMFlixDao {
    * @return User object that just been updated.
    */
   public boolean updateUserPreferences(String email, Map<String, ?> userPreferences) {
-    if (userPreferences == null){
-      throw new IncorrectDaoOperation("User preferences is required");
+    // make sure to check if userPreferences are not null. If null, return false immediately.
+    if (userPreferences == null) {
+      throw new IncorrectDaoOperation("userPreferences cannot be set to null");
     }
-
-    Bson queryFilter = new Document("email", email);
-    usersCollection.updateOne(queryFilter, set("preferences", userPreferences));
-    return true;
+    // create query filter and update object.
+    Bson updateFilter = new Document("email", email);
+    Bson updateObject = Updates.set("preferences", userPreferences);
+    try {
+      // update one document matching email.
+      UpdateResult res = usersCollection.updateOne(updateFilter, updateObject);
+      if (res.getModifiedCount() < 1) {
+        log.warn(
+                "User `{}` was not updated. Trying to re-write the same `preferences` field: `{}`",
+                email,
+                userPreferences);
+      }
+      return true;
+    } catch (MongoWriteException e) {
+      String errorMessage =
+              MessageFormat.format(
+                      "Issue caught while trying to update user `{}`: {}", email, e.getMessage());
+      throw new IncorrectDaoOperation(errorMessage);
+    }
   }
 }

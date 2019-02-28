@@ -4,6 +4,7 @@ import com.mongodb.*;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.model.Aggregates;
+import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Sorts;
 import com.mongodb.client.model.Updates;
 import com.mongodb.client.result.DeleteResult;
@@ -22,6 +23,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 
+import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -86,8 +88,15 @@ public class CommentDao extends AbstractMFlixDao {
       throw new IncorrectDaoOperation("Comment objects need to have an id field set.");
     }
 
-    commentCollection.insertOne(comment);
-    return comment;
+    try {
+      commentCollection.insertOne(comment);
+      return comment;
+    } catch (MongoWriteException e) {
+      String errorMessage =
+              MessageFormat.format(
+                      "Error occurred while adding a new Comment `{}`: {}", comment, e.getMessage());
+      throw new IncorrectDaoOperation(errorMessage);
+    }
   }
 
   /**
@@ -104,14 +113,33 @@ public class CommentDao extends AbstractMFlixDao {
    * @return true if successfully updates the comment text.
    */
   public boolean updateComment(String commentId, String text, String email) {
+    Bson filter =
+            Filters.and(Filters.eq("email", email), Filters.eq("_id", new ObjectId(commentId)));
+    Bson update = Updates.combine(Updates.set("text", text), Updates.set("date", new Date()));
+    try {
 
-    Bson comment = new Document("_id", new ObjectId(commentId)).append("email", email);
+      UpdateResult res = commentCollection.updateOne(filter, update);
 
-    Bson update = Updates.combine(Updates.set("text", text), Updates.set("date", new Date())) ;
+      if (res.getMatchedCount() > 0) {
 
-    UpdateResult res = commentCollection.updateOne(comment, update);
+        if (res.getModifiedCount() != 1) {
+          log.warn("Comment `{}` text was not updated. Is it the same text?");
+        }
 
-    return res.getModifiedCount() > 0;
+        return true;
+      }
+      log.error(
+              "Could not update comment `{}`. Make sure the comment is owned by `{}`",
+              commentId,
+              email);
+      return false;
+
+    } catch (MongoWriteException e) {
+      String messageError =
+              MessageFormat.format(
+                      "Error occurred while updating comment `{}`: {}", commentId, e.getMessage());
+      throw new IncorrectDaoOperation(messageError);
+    }
   }
 
   /**
@@ -122,9 +150,25 @@ public class CommentDao extends AbstractMFlixDao {
    * @return true if successful deletes the comment.
    */
   public boolean deleteComment(String commentId, String email) {
-      Bson myComments = and(eq("_id", new ObjectId(commentId)), eq("email", email));
-      DeleteResult deleteResult = commentCollection.deleteMany(myComments);
-      return deleteResult.getDeletedCount() > 0;
+    Bson filter =
+            Filters.and(Filters.eq("email", email), Filters.eq("_id", new ObjectId(commentId)));
+
+    try {
+      DeleteResult res = commentCollection.deleteOne(filter);
+      if (res.getDeletedCount() != 1) {
+        log.warn(
+                "Not able to delete comment `{}` for user `{}`. User"
+                        + " does not own comment or already deleted!",
+                commentId,
+                email);
+        return false;
+      }
+      return true;
+    } catch (MongoWriteException e) {
+      String errorMessage =
+              MessageFormat.format("Error deleting comment " + "`{}`: {}", commentId, e);
+      throw new IncorrectDaoOperation(errorMessage);
+    }
   }
 
   /**
